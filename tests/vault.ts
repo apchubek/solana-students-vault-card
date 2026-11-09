@@ -25,17 +25,21 @@ import {
 import { assert } from "chai";
 import { SimpleVault } from "../target/types/simple_vault";
 
-// Переводим SOL от admin → pubkey (обходит rate limit devnet airdrop)
-async function fundFromAdmin(
+// Переводим SOL нескольким получателям одной транзакцией (экономит RPC запросы и время)
+async function fundUsersBatch(
   provider: anchor.AnchorProvider,
   admin: Keypair,
-  pubkey: PublicKey,
+  pubkeys: PublicKey[],
   lamports = 0.05 * LAMPORTS_PER_SOL
 ) {
-  const tx = new Transaction().add(
-    SystemProgram.transfer({ fromPubkey: admin.publicKey, toPubkey: pubkey, lamports })
-  );
-  await provider.sendAndConfirm(tx, [admin]);
+  const tx = new Transaction();
+  for (const pubkey of pubkeys) {
+    tx.add(SystemProgram.transfer({ fromPubkey: admin.publicKey, toPubkey: pubkey, lamports }));
+  }
+  const latestBlockhash = await provider.connection.getLatestBlockhash("confirmed");
+  tx.recentBlockhash = latestBlockhash.blockhash;
+  tx.feePayer = admin.publicKey;
+  await provider.sendAndConfirm(tx, [admin], { commitment: "confirmed" });
 }
 
 describe("simple_vault", () => {
@@ -97,9 +101,7 @@ describe("simple_vault", () => {
     )[0];
 
   before(async () => {
-    await fundFromAdmin(provider, admin, userA.publicKey);
-    await fundFromAdmin(provider, admin, userB.publicKey);
-    await fundFromAdmin(provider, admin, userC.publicKey);
+    await fundUsersBatch(provider, admin, [userA.publicKey, userB.publicKey, userC.publicKey]);
 
     tokenMint = await createMint(provider.connection, admin, admin.publicKey, null, 6);
 
@@ -409,9 +411,7 @@ describe("simple_vault", () => {
     const shareAcc2: Record<string, PublicKey> = {};
 
     before(async () => {
-      await fundFromAdmin(provider, admin, user1.publicKey);
-      await fundFromAdmin(provider, admin, user2.publicKey);
-      await fundFromAdmin(provider, admin, user3.publicKey);
+      await fundUsersBatch(provider, admin, [user1.publicKey, user2.publicKey, user3.publicKey]);
 
       tokenMint2 = await createMint(provider.connection, admin, admin.publicKey, null, 6);
 
