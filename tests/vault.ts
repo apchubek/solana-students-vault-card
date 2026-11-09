@@ -75,6 +75,21 @@ describe("simple_vault", () => {
       .signers([user])
       .rpc();
 
+  const withdraw = (user: Keypair, shares: number) =>
+    program.methods
+      .withdraw(new anchor.BN(shares))
+      .accounts({
+        vaultState: vaultStatePDA,
+        userCard: cardPda(user.publicKey),
+        vaultTokenAccount: vaultTokenAccountPDA,
+        shareMint: shareMintPDA,
+        userTokenAccount: tokenAcc[user.publicKey.toBase58()],
+        userShareAccount: shareAcc[user.publicKey.toBase58()],
+        user: user.publicKey,
+      } as any)
+      .signers([user])
+      .rpc();
+
   const cardPda = (user: PublicKey) =>
     PublicKey.findProgramAddressSync(
       [Buffer.from("user_card"), vaultStatePDA.toBuffer(), user.toBuffer()],
@@ -302,6 +317,79 @@ describe("simple_vault", () => {
         admin: admin.publicKey,
       } as any)
       .rpc();
+  });
+
+  // ─── Неделя 10: Withdraw тесты ──────────────────────────────────────────────
+  describe("Неделя 10: withdraw (CPI burn & transfer)", () => {
+    it("withdraw: A возвращает 49 shares → получает 49 токенов", async () => {
+      // Баланс токенов A до вывода
+      const tokenBalBefore = await getAccount(provider.connection, tokenAcc[userA.publicKey.toBase58()]);
+      const sharesBalBefore = await getAccount(provider.connection, shareAcc[userA.publicKey.toBase58()]);
+
+      // Выводим 49 shares (49 * UNIT)
+      const sharesToWithdraw = 49 * UNIT;
+      await withdraw(userA, sharesToWithdraw);
+
+      const tokenBalAfter = await getAccount(provider.connection, tokenAcc[userA.publicKey.toBase58()]);
+      const sharesBalAfter = await getAccount(provider.connection, shareAcc[userA.publicKey.toBase58()]);
+
+      // Проверяем: shares сожглись, токены поступили
+      assert.equal(sharesBalAfter.amount, sharesBalBefore.amount - BigInt(sharesToWithdraw));
+      assert.equal(tokenBalAfter.amount, tokenBalBefore.amount + BigInt(sharesToWithdraw));
+
+      // Проверяем UserCard
+      const cardA = await program.account.userCard.fetch(cardPda(userA.publicKey));
+      assert.equal(cardA.shares.toNumber(), 50 * UNIT); // 99 - 49 = 50
+    });
+
+    it("withdraw: B выводит всё → shares сожжены, токены возвращены", async () => {
+      const sharesBalBefore = await getAccount(provider.connection, shareAcc[userB.publicKey.toBase58()]);
+      const tokenBalBefore = await getAccount(provider.connection, tokenAcc[userB.publicKey.toBase58()]);
+
+      await withdraw(userB, Number(sharesBalBefore.amount));
+
+      const sharesBalAfter = await getAccount(provider.connection, shareAcc[userB.publicKey.toBase58()]);
+      const tokenBalAfter = await getAccount(provider.connection, tokenAcc[userB.publicKey.toBase58()]);
+
+      assert.equal(sharesBalAfter.amount, BigInt(0));
+      assert.equal(tokenBalAfter.amount, tokenBalBefore.amount + sharesBalBefore.amount);
+
+      const cardB = await program.account.userCard.fetch(cardPda(userB.publicKey));
+      assert.equal(cardB.shares.toNumber(), 0);
+    });
+
+    it("withdraw: сумма 0 — ошибка", async () => {
+      let failed = false;
+      try {
+        await withdraw(userA, 0);
+      } catch (e: any) {
+        failed = true;
+        assert.include(e.toString(), "ZeroAmount");
+      }
+      assert.isTrue(failed, "вывод 0 shares должен завершиться ошибкой");
+    });
+
+    it("withdraw: больше своих shares — ошибка", async () => {
+      let failed = false;
+      try {
+        // У UserA осталось 50 * UNIT, пробуем вывести 100 * UNIT
+        await withdraw(userA, 100 * UNIT);
+      } catch (e: any) {
+        failed = true;
+      }
+      assert.isTrue(failed, "вывод больше своих shares должен упасть");
+    });
+
+    it("withdraw: без карточки — ошибка", async () => {
+      let failed = false;
+      try {
+        // UserC без карточки
+        await withdraw(userC, 10 * UNIT);
+      } catch {
+        failed = true;
+      }
+      assert.isTrue(failed, "вывод без карточки должен упасть");
+    });
   });
 
   // Задание 4: Тест сценария пропорциональных долей (три пользователя)
