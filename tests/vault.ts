@@ -36,10 +36,15 @@ async function fundUsersBatch(
   for (const pubkey of pubkeys) {
     tx.add(SystemProgram.transfer({ fromPubkey: admin.publicKey, toPubkey: pubkey, lamports }));
   }
-  const latestBlockhash = await provider.connection.getLatestBlockhash("confirmed");
-  tx.recentBlockhash = latestBlockhash.blockhash;
   tx.feePayer = admin.publicKey;
-  await provider.sendAndConfirm(tx, [admin], { commitment: "confirmed" });
+  const latestBlockhash = await provider.connection.getLatestBlockhash("finalized");
+  tx.recentBlockhash = latestBlockhash.blockhash;
+  tx.lastValidBlockHeight = latestBlockhash.lastValidBlockHeight;
+  await provider.sendAndConfirm(tx, [admin], {
+    commitment: "confirmed",
+    preflightCommitment: "confirmed",
+    maxRetries: 5,
+  });
 }
 
 describe("simple_vault", () => {

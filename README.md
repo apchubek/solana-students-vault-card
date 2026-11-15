@@ -1,10 +1,12 @@
 # Simple Vault — практика Anchor
 
-Учебный контракт на Anchor 0.31.1 (Solana). Сейчас он делает три вещи:
+Учебный контракт на Anchor 0.31.1 (Solana). Сейчас он делает пять вещей:
 
 1. **Vault создан** — админ создаёт vault для SPL-токена. *(неделя 8)*
 2. **У каждого пользователя своя «карточка»** — личный аккаунт (PDA) внутри vault. *(неделя 8)*
 3. **Депозит и share-токены** — пользователь вносит токены и получает share-токены. *(неделя 9)*
+4. **CPI и вывод** — пользователь сжигает shares и получает токены обратно. *(неделя 10)*
+5. **Свои токены и свой CLMM-пул на Raydium (devnet)** — скрипт `create-pool`, сам контракт на этой неделе не меняется. *(неделя 11)*
 
 Контракт будет дорабатываться (вывод, Raydium и т.д.), поэтому он намеренно небольшой.
 
@@ -16,6 +18,7 @@
 initialize_vault    создаёт VaultState PDA, vault token account и share mint
 create_user_card    создаёт UserCard PDA — личную карточку пользователя в vault
 deposit(amount)     переводит токены пользователя в vault → печатает ему shares
+withdraw(shares)    сжигает shares пользователя → отправляет ему токены из vault
 ```
 
 ### `initialize_vault`
@@ -70,6 +73,41 @@ Seeds: `["user_card", vault_state, user]` — поэтому у одного п�
 Для вызова `deposit` нужны: токен-аккаунт пользователя (с токенами vault) и share-аккаунт пользователя
 (для share mint). В тестах они создаются через `createAccount` из `@solana/spl-token`.
 
+### `withdraw(shares_amount)`
+
+Обратная операция: пользователь возвращает `shares_amount` share-токенов и забирает токены.
+
+Что происходит по шагам:
+
+1. Считается `tokens_out = shares * total_tokens / total_shares`.
+2. Через CPI в Token program (`burn`) сжигаются shares пользователя.
+3. Через CPI в Token program (`transfer`) токены переводятся из `vault_token_account` пользователю.
+4. Обновляются `total_tokens`, `total_shares` в vault и поля `UserCard`.
+
+Ошибки: `ZeroAmount`, `VaultEmpty`, `WithdrawTooSmall`, `MathOverflow`, `InsufficientShares`.
+
+---
+
+## Неделя 11 — свои токены и свой CLMM-пул на Raydium
+
+На неделе 11 контракт не меняется: добавляется отдельный скрипт `scripts/create-clmm-pool.ts`.
+
+Скрипт делает три шага:
+
+1. Создаёт два тестовых SPL-токена (`TOKEN_A`, `TOKEN_B`, по 6 decimals) и минтит по 1 000 000 каждого на кошелёк.
+2. Берёт CLMM-конфиг из Raydium API (devnet) и создаёт пул `TOKEN_A / TOKEN_B` со стартовой ценой 1.
+3. Сохраняет адреса в `devnet-pool.json`.
+
+Запуск:
+
+```bash
+yarn create-pool
+```
+
+Полезные env-переменные:
+- `ANCHOR_WALLET` — путь к кошельку (если не используешь `~/.config/solana/id.json`)
+- `DEVNET_RPC` — свой RPC (если публичный devnet часто возвращает `429`)
+
 ---
 
 ## Требования
@@ -83,7 +121,7 @@ Seeds: `["user_card", vault_state, user]` — поэтому у одного п�
 | Yarn | any | `npm i -g yarn` |
 
 Rust-зависимости (`anchor-lang`, `anchor-spl` 0.31.1) подтянутся сами при `anchor build`.
-JS-зависимости (`@coral-xyz/anchor`, `@solana/web3.js`, `@solana/spl-token`, `mocha`, `chai`, `typescript`) — через `yarn install`.
+JS-зависимости (`@coral-xyz/anchor`, `@solana/web3.js`, `@solana/spl-token`, `@raydium-io/raydium-sdk-v2`, `decimal.js`, `ts-node`, `mocha`, `chai`, `typescript`) — через `yarn install`.
 
 ---
 
@@ -150,11 +188,16 @@ yarn test
 ✔ initialize_vault: vault создан
 ✔ create_user_card: у каждого пользователя своя карточка
 ✔ create_user_card: вторая карточка для того же пользователя — ошибка
-✔ deposit: A вносит 100 токенов → получает 100 shares
-✔ deposit: B вносит 50 токенов → получает 50 shares
+✔ deposit: A вносит 100 токенов → получает 99 shares (1% fee)
+✔ deposit: B вносит 50 токенов → получает пропорциональные shares
 ✔ deposit: без карточки — ошибка
 ✔ deposit: сумма 0 — ошибка
-7 passing
+✔ withdraw: A возвращает часть shares
+✔ withdraw: B выводит всё
+✔ withdraw: сумма 0 — ошибка
+✔ withdraw: больше своих shares — ошибка
+✔ withdraw: без карточки — ошибка
+16 passing
 ```
 
 ---
@@ -163,6 +206,7 @@ yarn test
 
 ```
 vault-simple/
+├── scripts/create-clmm-pool.ts        # неделя 11: токены и CLMM-пул на Raydium
 ├── programs/simple_vault/src/lib.rs   # контракт
 ├── tests/vault.ts                     # тесты
 ├── Anchor.toml

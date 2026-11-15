@@ -22,3 +22,6 @@ devnet-wallet.json
 .DS_Store
 .vscode/
 .idea/
+
+# Week 11 Raydium pool output
+devnet-pool.json
